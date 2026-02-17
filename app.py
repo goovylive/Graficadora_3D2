@@ -1,10 +1,9 @@
 """
 Backend FastAPI para computar mallas 3D de superficies implícitas f(x,y,z,t)=0
-usando Marching Cubes (scikit-image) y evaluación segura con numexpr.
+usando Marching Cubes (scikit-image) y evaluación segura con eval.
 """
 import re
 import numpy as np
-import numexpr
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -50,21 +49,24 @@ _UNSAFE_PATTERNS = re.compile(
 
 
 def _sanitize_equation(equation: str) -> str:
-    """Normaliza y sanitiza la ecuación para numexpr."""
+    """Normaliza y sanitiza la ecuación para evaluación segura."""
     if not equation or not equation.strip():
         raise ValueError("La ecuación no puede estar vacía")
     eq = equation.strip()
     if _UNSAFE_PATTERNS.search(eq):
         raise ValueError("La ecuación contiene caracteres o términos no permitidos")
-    # numexpr usa 'power' en lugar de 'pow'; permitir ** y pow( → power(
     eq = eq.replace("^", "**")
     eq = re.sub(r"\bpow\s*\(", "power(", eq, flags=re.IGNORECASE)
+    eq = re.sub(r"\bsqrt\s*\(", "safe_sqrt(", eq, flags=re.IGNORECASE)
     return eq
 
 
-def _evaluate_equation(equation: str, X: np.ndarray, Y: np.ndarray, Z: np.ndarray, t: float) -> np.ndarray:
-    """Evalúa la ecuación en la malla 3D usando numexpr."""
+def _evaluate_equation(equation: str, X, Y, Z, t):
     eq = _sanitize_equation(equation)
+
+    def safe_sqrt(arr):
+        return np.sqrt(np.maximum(arr, 0.0))
+
     local_dict = {
         "x": X,
         "y": Y,
@@ -72,19 +74,30 @@ def _evaluate_equation(equation: str, X: np.ndarray, Y: np.ndarray, Z: np.ndarra
         "t": t,
         "sin": np.sin,
         "cos": np.cos,
-        "sqrt": np.sqrt,
+        "sqrt": safe_sqrt,
+        "safe_sqrt": safe_sqrt,
         "exp": np.exp,
         "log": np.log,
         "abs": np.abs,
         "power": np.power,
         "tan": np.tan,
+        "pi": np.pi,
+        "e": np.e,
     }
+
     try:
-        result = numexpr.evaluate(eq, local_dict=local_dict)
+        namespace = {**local_dict}
+        result = eval(eq, {"__builtins__": {}}, namespace)
+        if np.isscalar(result):
+            result = np.full_like(X, result)
     except Exception as e:
         raise ValueError(f"Error al evaluar la ecuación: {e}") from e
+
     if not isinstance(result, np.ndarray) or result.shape != X.shape:
-        raise ValueError("La ecuación debe producir un array 3D con la misma forma que la malla")
+        raise ValueError("La ecuación debe producir un array 3D")
+
+    result = np.nan_to_num(result, nan=1e10, posinf=1e10, neginf=-1e10)
+
     return np.asarray(result, dtype=np.float64)
 
 

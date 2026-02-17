@@ -11,6 +11,41 @@
   <script>
     // URL de la API en Hugging Face
     const API_URL = 'https://goovylive-implicit-surface-api.hf.space';
+
+    async function wakeUpServer() {
+      const statusEl = document.getElementById('serverStatus');
+      if (statusEl) {
+        statusEl.textContent = '🟡 Conectando con servidor...';
+        statusEl.style.color = '#d29922';
+      }
+      try {
+        const response = await fetch(`${API_URL}/health`, {
+          signal: AbortSignal.timeout(90000)
+        });
+        if (response.ok) {
+          console.log('✅ Servidor listo');
+          if (statusEl) {
+            statusEl.textContent = '🟢 Servidor listo';
+            statusEl.style.color = '#3fb950';
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ Servidor iniciando...');
+        if (statusEl) {
+          statusEl.textContent = '🔴 Servidor iniciando, espera un momento...';
+          statusEl.style.color = '#f85149';
+        }
+      }
+    }
+
+    setInterval(async () => {
+      try {
+        await fetch(`${API_URL}/health`);
+      } catch (e) {}
+    }, 4 * 60 * 1000);
+
+    wakeUpServer();
   </script>
   <style>
     :root {
@@ -373,6 +408,12 @@
           <span></span>
         </button>
       </div>
+      <div id="serverStatus" style="
+        font-size: 0.78rem;
+        font-weight: 600;
+        margin-top: 4px;
+        transition: all 0.3s ease;
+      "></div>
     </header>
 
     <p class="mobile-warning" id="mobileWarning" role="status">Mejor experiencia en desktop</p>
@@ -647,6 +688,13 @@
         };
       }
 
+      function normalizeEquation(eq) {
+        if (!eq) return eq;
+        eq = eq.replace(/\^/g, '**');
+        eq = eq.trim();
+        return eq;
+      }
+
       function calculateNumFrames() {
         const r = getRanges();
         const tRange = r.tMax - r.tMin;
@@ -722,8 +770,8 @@
         const r = getRanges();
         const n = Math.min(32, Math.max(8, parseInt(elements.resolution.value, 10) || 18));
 
-        const MAX_RETRIES = 3;
-        const TIMEOUT_MS = 60000;
+        const MAX_RETRIES = 5;
+        const TIMEOUT_MS = 120000;
 
         showApiIndicator();
 
@@ -738,7 +786,7 @@
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                equation: elements.equation.value.trim(),
+                equation: normalizeEquation(elements.equation.value.trim()),
                 ranges: {
                   xMin: r.xMin,
                   xMax: r.xMax,
@@ -756,8 +804,9 @@
             clearTimeout(timeoutId);
 
             if (!response.ok) {
-              const error = await response.json().catch(() => ({}));
-              throw new Error(error.detail || 'Error al calcular la malla');
+              const errBody = await response.json().catch(() => ({}));
+              const detail = errBody.detail || 'Error al calcular la malla';
+              throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
             }
 
             const data = await response.json();
@@ -770,16 +819,20 @@
             console.error(`Intento ${attempt}/${MAX_RETRIES} falló:`, error);
 
             if (error.name === 'AbortError') {
-              showMsg(elements.msgTime, `Timeout (intento ${attempt}/${MAX_RETRIES})`, 'warning');
-            }
-
-            if (attempt === MAX_RETRIES) {
+              showMsg(elements.msgEquation, `Tiempo de espera agotado (${attempt}/${MAX_RETRIES}). Prueba menor resolución.`, 'warning');
+            } else if (error.message && error.message.toLowerCase().includes('fetch')) {
+              showMsg(elements.msgEquation, `Servidor no disponible (${attempt}/${MAX_RETRIES}). El servidor puede estar iniciando.`, 'warning');
+            } else if (error.message && (error.message.includes('ecuación') || error.message.includes('evaluar'))) {
+              showMsg(elements.msgEquation, error.message, 'error');
+            } else if (attempt === MAX_RETRIES) {
               hideApiIndicator();
-              showMsg(elements.msgEquation, 'Error de conexión con el servidor. Intenta con menor resolución.', 'error');
+              showMsg(elements.msgEquation, 'Error de conexión con el servidor después de varios intentos. Intenta con menor resolución o más tarde.', 'error');
               return null;
+            } else {
+              showMsg(elements.msgTime, `Reintentando (${attempt}/${MAX_RETRIES})...`, 'warning');
             }
 
-            await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+            await new Promise(resolve => setTimeout(resolve, 2000 * attempt));
           }
         }
 
