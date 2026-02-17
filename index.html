@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0d1117">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <title>Superficies Implícitas 4D — f(x,y,z,t)=0</title>
+  <link rel="manifest" href="manifest.json">
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
   <style>
     :root {
@@ -344,15 +347,29 @@
       }
     }
   </style>
+  <link rel="stylesheet" href="style-mobile.css">
 </head>
 <body>
   <div class="app">
     <header>
-      <h1>Superficies implícitas 4D</h1>
-      <p>Visualización de f(x,y,z,t) = 0 — t como parámetro temporal. Rotar: arrastrar · Zoom: scroll</p>
+      <div class="header-mobile">
+        <div class="header-text">
+          <h1>Superficies implícitas 4D</h1>
+          <p>Visualización de f(x,y,z,t) = 0 — t como parámetro temporal. Rotar: arrastrar · Zoom: scroll</p>
+        </div>
+        <button type="button" class="hamburger" id="btnHamburger" aria-label="Abrir o cerrar controles" aria-expanded="false">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+      </div>
     </header>
 
-    <aside class="sidebar">
+    <p class="mobile-warning" id="mobileWarning" role="status">Mejor experiencia en desktop</p>
+
+    <div class="sidebar-wrapper">
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-inner">
       <section class="panel">
         <h2 class="panel-title">Ecuación y rangos</h2>
         <div class="form-group">
@@ -439,7 +456,13 @@
         </div>
         <div id="msgTime" class="message"></div>
       </section>
-    </aside>
+      <section class="panel">
+        <h2 class="panel-title">Rendimiento</h2>
+        <button type="button" class="btn btn-low-power" id="btnLowPower" title="Reduce resolución para ahorrar batería">Modo bajo consumo</button>
+      </section>
+        </div>
+      </aside>
+    </div>
 
     <div class="viz-container" style="position:relative">
       <div id="plot3d"></div>
@@ -635,7 +658,11 @@
         msgTime: document.getElementById('msgTime'),
         plot3d: document.getElementById('plot3d'),
         loadingOverlay: document.getElementById('loadingOverlay'),
-        examples: document.querySelectorAll('[data-example]')
+        examples: document.querySelectorAll('[data-example]'),
+        btnHamburger: document.getElementById('btnHamburger'),
+        sidebar: document.getElementById('sidebar'),
+        mobileWarning: document.getElementById('mobileWarning'),
+        btnLowPower: document.getElementById('btnLowPower')
       };
 
       let currentFn = null;
@@ -643,6 +670,16 @@
       let isPlaying = false;
       let lastUpdate = 0;
       let sliderDebounce = null;
+
+      function isMobile() {
+        return window.matchMedia('(max-width: 768px)').matches || 'ontouchstart' in window;
+      }
+
+      function isLowPower() {
+        return document.body.classList.contains('mode-low-power');
+      }
+
+      var plotlyConfig = { responsive: true, displayModeBar: true };
 
       function showMsg(el, text, type) {
         el.textContent = text;
@@ -684,7 +721,11 @@
       function computeMesh(t) {
         if (!currentFn) return null;
         const r = getRanges();
-        const n = Math.min(32, Math.max(8, parseInt(elements.resolution.value, 10) || 18));
+        let maxRes = 32;
+        if (isMobile()) maxRes = 12;
+        if (isLowPower()) maxRes = 10;
+        const requested = parseInt(elements.resolution.value, 10) || 18;
+        const n = Math.min(maxRes, Math.max(8, isLowPower() ? 10 : requested));
         return marchingCubes(currentFn, r.xMin, r.xMax, r.yMin, r.yMax, r.zMin, r.zMax, t, n);
       }
 
@@ -707,7 +748,7 @@
                 yaxis: { title: 'Y', gridcolor: '#30363d', color: '#8b949e' },
                 zaxis: { title: 'Z', gridcolor: '#30363d', color: '#8b949e' }
               }
-            }, { responsive: true });
+            }, plotlyConfig);
             return;
           }
           const v = mesh.vertices;
@@ -738,7 +779,7 @@
               yaxis: { title: 'Y', range: [r.yMin, r.yMax], gridcolor: '#30363d', color: '#8b949e' },
               zaxis: { title: 'Z', range: [r.zMin, r.zMax], gridcolor: '#30363d', color: '#8b949e' }
             }
-          }, { responsive: true });
+          }, plotlyConfig);
         });
       }
 
@@ -763,15 +804,23 @@
         }
       }
 
+      var animFrameCount = 0;
+      var mobileFpsThrottle = 3;
       function togglePlay() {
         isPlaying = !isPlaying;
         elements.btnPlay.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
         elements.btnPlay.classList.toggle('btn-success', isPlaying);
         if (isPlaying) {
           lastUpdate = performance.now();
+          animFrameCount = 0;
           function loop(now) {
             if (!isPlaying) return;
             animId = requestAnimationFrame(loop);
+            var doUpdate = true;
+            if (isMobile()) {
+              animFrameCount++;
+              doUpdate = (animFrameCount % mobileFpsThrottle === 0);
+            }
             const speed = parseFloat(elements.speed.value) || 1;
             const r = getRanges();
             const dt = (now - lastUpdate) / 1000 * (r.tMax - r.tMin) * 0.15 * speed;
@@ -780,7 +829,7 @@
             if (t > r.tMax) t = r.tMin + (t - r.tMax);
             if (t < r.tMin) t = r.tMax - (r.tMin - t);
             setTValue(t);
-            updatePlot(t);
+            if (doUpdate) updatePlot(t);
           }
           animId = requestAnimationFrame(loop);
         } else if (animId != null) {
@@ -794,6 +843,28 @@
         setTValue(r.tMin);
         if (currentFn) updatePlot(r.tMin);
       }
+
+      if (elements.btnHamburger && elements.sidebar) {
+        elements.btnHamburger.addEventListener('click', function() {
+          const open = elements.sidebar.classList.toggle('is-open');
+          elements.btnHamburger.setAttribute('aria-expanded', open);
+        });
+      }
+
+      if (elements.mobileWarning && isMobile()) {
+        elements.mobileWarning.classList.add('is-mobile');
+      }
+
+      if (elements.btnLowPower) {
+        elements.btnLowPower.addEventListener('click', function() {
+          document.body.classList.toggle('mode-low-power');
+          const on = document.body.classList.contains('mode-low-power');
+          elements.btnLowPower.textContent = on ? 'Desactivar bajo consumo' : 'Modo bajo consumo';
+          if (currentFn) updatePlot(getT());
+        });
+      }
+
+      plotlyConfig.displayModeBar = !isMobile();
 
       elements.btnUpdate.addEventListener('click', buildAndUpdate);
       elements.tSlider.addEventListener('input', onSliderInput);

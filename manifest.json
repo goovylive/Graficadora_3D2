@@ -1,0 +1,11 @@
+{
+  "name": "Superficies Implícitas 4D",
+  "short_name": "Superficies 4D",
+  "description": "Visualización de superficies implícitas f(x,y,z,t)=0 con parámetro temporal",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "orientation": "any",
+  "lang": "es"
+}
