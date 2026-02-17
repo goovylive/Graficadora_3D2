@@ -8,6 +8,10 @@
   <title>Superficies Implícitas 4D — f(x,y,z,t)=0</title>
   <link rel="manifest" href="manifest.json">
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <script>
+    // URL de la API en Hugging Face
+    const API_URL = 'https://goovylive-implicit-surface-api.hf.space';
+  </script>
   <style>
     :root {
       --bg-primary: #0d1117;
@@ -497,146 +501,6 @@
         }
       };
 
-      function createEvaluator(equationStr) {
-        const allowed = ['sin', 'cos', 'sqrt', 'exp', 'log', 'abs', 'pow', 'tan', 'Math', 'x', 'y', 'z', 't', 'PI', 'E'];
-        const normalized = equationStr
-          .replace(/\^/g, '**')
-          .replace(/\b(\d+)\.(\d+)\b/g, '$1.$2')
-          .replace(/\b(sin|cos|sqrt|exp|log|abs|tan)\s*\(/g, 'Math.$1(')
-          .replace(/\bpow\s*\(/g, 'Math.pow(');
-        try {
-          const fn = new Function('x', 'y', 'z', 't', `
-            "use strict";
-            const sin = Math.sin, cos = Math.cos, sqrt = Math.sqrt, exp = Math.exp;
-            const log = Math.log, abs = Math.abs, pow = Math.pow, tan = Math.tan;
-            const PI = Math.PI, E = Math.E;
-            return (${normalized});
-          `);
-          return fn;
-        } catch (e) {
-          throw new Error('Ecuación inválida: ' + e.message);
-        }
-      }
-
-      const EDGE_TABLE = new Uint32Array([
-        0, 265, 515, 778, 1030, 1295, 1541, 1792, 2060, 2317, 2575, 2822, 3082, 3331, 3593, 3840,
-        1040, 1289, 1555, 1802, 2046, 2311, 2565, 2816, 3084, 3333, 3589, 3842, 4098, 4355, 4609, 4864,
-        3040, 3289, 3555, 3802, 4046, 4311, 4565, 4816, 5084, 5333, 5589, 5842, 6098, 6355, 6609, 6864,
-        4000, 4249, 4515, 4762, 5006, 5271, 5525, 5776, 6044, 6293, 6549, 6802, 7058, 7315, 7569, 7824,
-        104, 361, 619, 874, 1134, 1399, 1645, 1896, 2164, 2421, 2679, 2926, 3186, 3435, 3697, 3944,
-        1144, 1393, 1659, 1906, 2150, 2415, 2669, 2920, 3188, 3437, 3693, 3946, 4202, 4459, 4713, 4968,
-        3144, 3393, 3659, 3906, 4150, 4415, 4669, 4920, 5188, 5437, 5693, 5946, 6202, 6459, 6713, 6968,
-        4104, 4353, 4619, 4866, 5110, 5375, 5629, 5880, 6148, 6397, 6653, 6906, 7162, 7419, 7673, 7928,
-        208, 457, 723, 970, 1222, 1487, 1741, 1992, 2260, 2509, 2765, 3018, 3274, 3531, 3785, 4040,
-        1248, 1497, 1763, 2010, 2254, 2519, 2773, 3024, 3292, 3541, 3797, 4050, 4306, 4563, 4817, 5072,
-        3248, 3497, 3763, 4010, 4254, 4519, 4773, 5024, 5292, 5541, 5797, 6050, 6306, 6563, 6817, 7072,
-        4208, 4457, 4723, 4970, 5214, 5479, 5733, 5984, 6252, 6501, 6757, 7010, 7266, 7523, 7777, 8032,
-        312, 569, 827, 1082, 1342, 1607, 1853, 2104, 2372, 2629, 2887, 3134, 3394, 3643, 3905, 4152,
-        1352, 1601, 1867, 2114, 2358, 2623, 2877, 3128, 3396, 3645, 3901, 4154, 4410, 4667, 4921, 5176,
-        3352, 3601, 3867, 4114, 4358, 4623, 4877, 5128, 5396, 5645, 5901, 6154, 6410, 6667, 6921, 7176,
-        4312, 4561, 4827, 5074, 5318, 5583, 5837, 6088, 6356, 6605, 6861, 7114, 7370, 7627, 7881, 8136
-      ]);
-
-      const TRI_TABLE = [
-        [], [0,8,3], [0,1,9], [1,8,3,9,8,1], [1,2,10], [0,8,3,1,2,10], [9,2,10,0,2,9], [2,8,3,2,10,8,10,9,8],
-        [3,11,2], [0,11,2,8,11,0], [1,9,0,2,3,11], [1,11,2,1,9,11,9,8,11], [3,10,1,11,10,3], [0,10,1,0,8,10,8,11,10], [3,9,0,3,11,9,11,10,9], [9,8,10,10,8,11],
-        [4,7,8], [4,3,0,7,3,4], [0,1,9,8,4,7], [4,1,9,4,7,1,7,3,1], [1,2,10,8,4,7], [3,4,7,3,0,4,1,2,10], [9,2,10,9,0,2,8,4,7], [2,10,9,2,9,7,2,7,3,7,9,4],
-        [8,4,7,3,11,2], [11,4,7,11,2,4,2,0,4], [9,0,1,8,4,7,2,3,11], [4,7,11,9,4,11,9,11,2,9,2,1], [1,2,10,8,4,7,3,11], [2,10,1,11,10,2,11,2,0,11,0,4,11,4,7], [10,9,0,10,0,2,11,4,7,11,2,4,2,11,0], [9,4,7,9,7,10,10,7,11,2,10,11,1,2,9,2,1,9],
-        [3,4,7,3,0,4,0,1,4], [1,4,7,1,7,3], [0,4,7,0,7,9,9,7,3,9,3,1], [9,4,7,1,9,7,1,7,3], [10,1,2,8,4,7], [2,10,1,0,8,4,0,4,7,0,7,3], [4,7,8,10,0,2,10,9,0], [2,10,9,2,9,7,2,7,3,9,4,7],
-        [8,4,7,3,11,2,10,1,9], [10,1,9,11,0,4,11,4,7], [10,2,11,10,11,0,10,0,9,8,4,7], [10,2,11,9,10,11,9,11,4,9,4,7], [1,2,10,8,4,7,3,11], [2,10,1,11,10,2,0,11,2,4,11,0,7,11,4], [9,0,2,9,2,10,8,2,0,8,4,2,8,7,4], [9,4,7,10,9,7,10,7,11,10,11,2],
-        [4,9,5], [0,8,3,4,9,5], [0,1,5,4,1,0], [8,4,5,8,5,3,3,5,1], [1,2,10,9,5,4], [3,0,8,1,2,10,4,9,5], [5,2,10,5,4,2,4,0,2], [2,10,5,2,5,4,2,4,8,2,8,3],
-        [9,5,4,2,3,11], [0,11,2,0,8,11,4,9,5], [0,1,5,4,1,0,2,3,11], [2,1,5,2,5,8,2,8,11,4,8,5], [10,3,11,10,1,3,9,5,4], [4,9,5,8,0,1,8,1,10,8,10,11], [5,4,0,5,0,11,5,11,10,11,0,3], [5,4,8,5,8,10,10,8,11],
-        [9,7,8,5,7,9], [9,3,0,9,5,3,5,7,3], [0,7,8,0,1,7,1,5,7], [1,5,3,3,5,7], [9,7,8,9,5,7,10,1,2], [10,1,2,9,5,0,5,3,0,5,7,3], [8,0,2,8,2,5,8,5,7,10,5,2], [2,10,5,2,5,3,3,5,7],
-        [7,9,5,7,8,9,3,11,2], [9,5,7,9,7,2,9,2,0,2,7,11], [2,3,11,0,1,8,1,7,8,1,5,7], [11,2,1,11,1,7,7,1,5], [9,5,8,8,5,7,10,1,3,10,3,11], [5,7,9,7,5,8,3,11,0,1,10,11,1,0], [11,0,2,11,2,10,7,9,5,7,5,8,5,0,8], [11,2,10,7,11,10,7,10,5,7,5,9],
-        [2,5,10,2,3,5,3,7,5], [8,2,0,8,5,2,8,7,5,10,2,5], [9,0,1,5,10,3,5,3,7,3,10,2], [9,8,2,9,2,1,8,7,2,10,2,5,7,5,2], [1,3,5,3,7,5], [0,8,7,0,7,1,1,7,5], [9,0,3,9,3,5,5,3,7], [9,8,7,9,7,5],
-        [5,8,4,5,10,8,10,11,8], [5,0,4,5,11,0,5,10,11], [0,1,9,8,4,10,8,10,11,10,4,5], [10,11,4,10,4,5,11,1,4,11,0,1], [8,4,7,2,5,10,2,3,5,3,7,5], [10,2,5,2,4,5,2,0,4,7,5,3], [9,0,1,8,4,7,2,10,5,2,5,3,5,7,3], [9,4,7,9,7,2,9,2,1,10,5,2],
-        [6,2,1,6,7,2,7,3,2], [6,2,1,8,6,1,8,7,6], [0,7,8,0,2,7,2,6,7], [2,6,7,2,7,3], [1,6,7,1,10,6,1,0,10,0,8,10], [11,6,7,1,10,0], [0,8,10,0,10,2,8,7,10,6,10,7], [7,3,2,7,2,6,6,2,10],
-        [1,6,7,1,10,6,3,11,2], [1,6,7,1,10,6,11,2,0,11,0,8], [0,2,8,2,6,8,2,10,6,8,6,7], [7,3,2,7,2,6,6,2,10], [1,10,6,1,6,7,1,7,0,8,0,7], [11,6,7,11,0,6,0,1,6], [7,11,6,7,0,11,7,8,0,6,10,0], [7,11,6,10,6,11],
-        [6,11,7,6,2,11,6,9,2,6,1,9], [1,9,6,1,6,7,1,7,8,8,7,11], [2,9,6,2,6,1,2,11,6,7,6,11], [9,6,1,9,1,8,8,1,7,11,7,1], [6,11,7,2,11,6,2,9,11,2,1,9], [8,11,7,8,2,11,8,0,2,9,6,1], [11,7,6,2,11,6,2,6,1,2,1,0], [11,7,6,11,6,0,0,6,1,8,0,1],
-        [6,7,10,10,7,8,10,8,9], [6,7,10,10,7,0,10,0,9,0,7,3], [6,7,8,6,8,10,10,8,0], [7,3,6,6,3,10,10,3,0], [1,0,9,10,6,7,10,7,8], [10,6,7,10,7,1,1,7,3], [10,6,7,10,7,0,0,7,8], [10,6,7,3,10,7],
-        [1,9,2,1,2,11,9,6,2,9,7,6], [7,1,9,7,9,6,6,9,2,6,2,11], [8,9,0,2,11,6,2,6,7], [7,2,11,7,6,2], [8,1,9,8,0,1,6,11,7], [11,7,6,11,6,0,0,6,1], [7,8,0,7,0,6,6,0,1,6,1,10], [7,6,11,1,10,0],
-        [10,7,6,10,9,7,10,1,9], [1,9,0,10,7,6,10,6,11], [11,7,6,11,6,0,0,6,9], [7,6,11,11,6,9], [6,7,10,1,9,8,1,8,0], [10,7,6,10,6,1,1,6,0], [6,7,10,6,10,0,0,10,9], [6,7,10,9,6,10]
-      ];
-
-      const EDGE_VERTICES = [
-        [0,1], [1,2], [2,3], [3,0], [4,5], [5,6], [6,7], [7,4], [0,4], [1,5], [2,6], [3,7]
-      ];
-
-      const CUBE_CORNERS = [
-        [0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]
-      ];
-
-      function marchingCubes(f, xMin, xMax, yMin, yMax, zMin, zMax, t, n) {
-        const dx = (xMax - xMin) / n, dy = (yMax - yMin) / n, dz = (zMax - zMin) / n;
-        const vertices = [];
-        const faces = [];
-        const vertexMap = new Map();
-
-        function vertexKey(i, j, k, edge) {
-          return `${i},${j},${k},${edge}`;
-        }
-
-        function getVertex(i, j, k, e) {
-          const key = vertexKey(i, j, k, e);
-          if (vertexMap.has(key)) return vertexMap.get(key);
-          const [a, b] = EDGE_VERTICES[e];
-          const [ia, ja, ka] = CUBE_CORNERS[a];
-          const [ib, jb, kb] = CUBE_CORNERS[b];
-          const x0 = xMin + (i + ia) * dx, x1 = xMin + (i + ib) * dx;
-          const y0 = yMin + (j + ja) * dy, y1 = yMin + (j + jb) * dy;
-          const z0 = zMin + (k + ka) * dz, z1 = zMin + (k + kb) * dz;
-          const v0 = f(x0, y0, z0, t), v1 = f(x1, y1, z1, t);
-          const denom = v1 - v0;
-          const t_param = Math.abs(denom) < 1e-10 ? 0.5 : -v0 / denom;
-          const t_clamp = Math.max(0, Math.min(1, t_param));
-          const x = x0 + t_clamp * (x1 - x0);
-          const y = y0 + t_clamp * (y1 - y0);
-          const z = z0 + t_clamp * (z1 - z0);
-          const idx = vertices.length / 3;
-          vertices.push(x, y, z);
-          vertexMap.set(key, idx);
-          return idx;
-        }
-
-        const grid = new Float64Array((n + 1) * (n + 1) * (n + 1));
-        for (let k = 0; k <= n; k++)
-          for (let j = 0; j <= n; j++)
-            for (let i = 0; i <= n; i++)
-              grid[(k * (n + 1) + j) * (n + 1) + i] = f(xMin + i * dx, yMin + j * dy, zMin + k * dz, t);
-
-        for (let k = 0; k < n; k++)
-          for (let j = 0; j < n; j++)
-            for (let i = 0; i < n; i++) {
-              let cellIndex = 0;
-              const base = (k * (n + 1) + j) * (n + 1) + i;
-              const v = [
-                grid[base], grid[base + 1], grid[base + (n + 1) + 1], grid[base + (n + 1)],
-                grid[base + (n + 1) * (n + 1)], grid[base + (n + 1) * (n + 1) + 1],
-                grid[base + (n + 1) * (n + 1) + (n + 1) + 1], grid[base + (n + 1) * (n + 1) + (n + 1)]
-              ];
-              for (let c = 0; c < 8; c++) if (v[c] <= 0) cellIndex |= 1 << c;
-              const edges = EDGE_TABLE[cellIndex];
-              if (edges === 0) continue;
-              let tri = TRI_TABLE[cellIndex];
-              let reverseWinding = false;
-              if (!tri && cellIndex >= 128) {
-                tri = TRI_TABLE[255 - cellIndex];
-                reverseWinding = tri && tri.length > 0;
-              }
-              if (!tri || tri.length === 0) continue;
-              for (let idx = 0; idx < tri.length; idx += 3) {
-                const e0 = tri[idx], e1 = tri[idx + 1], e2 = tri[idx + 2];
-                const i0 = getVertex(i, j, k, e0);
-                const i1 = getVertex(i, j, k, e1);
-                const i2 = getVertex(i, j, k, e2);
-                if (reverseWinding) faces.push(i0, i2, i1);
-                else faces.push(i0, i1, i2);
-              }
-            }
-
-        return { vertices, faces };
-      }
-
       const elements = {
         equation: document.getElementById('equation'),
         xMin: document.getElementById('xMin'),
@@ -718,7 +582,7 @@
         };
       }
 
-      function computeMesh(t) {
+      async function computeMesh(t) {
         if (!currentFn) return null;
         const r = getRanges();
         let maxRes = 32;
@@ -726,15 +590,53 @@
         if (isLowPower()) maxRes = 10;
         const requested = parseInt(elements.resolution.value, 10) || 18;
         const n = Math.min(maxRes, Math.max(8, isLowPower() ? 10 : requested));
-        return marchingCubes(currentFn, r.xMin, r.xMax, r.yMin, r.yMax, r.zMin, r.zMax, t, n);
+
+        try {
+          const response = await fetch(`${API_URL}/compute-mesh`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              equation: elements.equation.value.trim(),
+              ranges: {
+                xMin: r.xMin,
+                xMax: r.xMax,
+                yMin: r.yMin,
+                yMax: r.yMax,
+                zMin: r.zMin,
+                zMax: r.zMax
+              },
+              t: t,
+              resolution: n
+            })
+          });
+
+          if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || 'Error al calcular la malla');
+          }
+
+          const data = await response.json();
+          return {
+            vertices: data.vertices,
+            faces: data.faces
+          };
+        } catch (error) {
+          console.error('Error API:', error);
+          showMsg(elements.msgEquation, error.message, 'error');
+          return null;
+        }
       }
 
-      function updatePlot(t) {
+      async function updatePlot(t) {
         if (!currentFn) return;
         elements.loadingOverlay.classList.add('visible');
-        requestAnimationFrame(function doUpdate() {
-          const mesh = computeMesh(t);
+
+        try {
+          const mesh = await computeMesh(t);
           elements.loadingOverlay.classList.remove('visible');
+
           if (!mesh || mesh.vertices.length === 0) {
             Plotly.react(elements.plot3d, [{
               x: [0], y: [0], z: [0], mode: 'markers', type: 'scatter3d',
@@ -751,11 +653,15 @@
             }, plotlyConfig);
             return;
           }
+
           const v = mesh.vertices;
           const x = [], y = [], z = [];
           for (let i = 0; i < v.length; i += 3) {
-            x.push(v[i]); y.push(v[i + 1]); z.push(v[i + 2]);
+            x.push(v[i]);
+            y.push(v[i + 1]);
+            z.push(v[i + 2]);
           }
+
           const r = getRanges();
           const zNorm = z.map(zi => (zi - r.zMin) / ((r.zMax - r.zMin) || 1));
           const colorscale = [[0, 'rgba(88,166,255,0.9)'], [0.5, 'rgba(63,185,80,0.9)'], [1, 'rgba(210,153,34,0.9)']];
@@ -780,19 +686,18 @@
               zaxis: { title: 'Z', range: [r.zMin, r.zMax], gridcolor: '#30363d', color: '#8b949e' }
             }
           }, plotlyConfig);
-        });
+        } catch (error) {
+          elements.loadingOverlay.classList.remove('visible');
+          console.error('Error al actualizar plot:', error);
+        }
       }
 
-      function buildAndUpdate() {
+      async function buildAndUpdate() {
         hideMsg(elements.msgEquation);
-        try {
-          currentFn = createEvaluator(elements.equation.value.trim());
-          const t = getT();
-          setTValue(t);
-          updatePlot(t);
-        } catch (err) {
-          showMsg(elements.msgEquation, err.message, 'error');
-        }
+        currentFn = true;
+        const t = getT();
+        setTValue(t);
+        await updatePlot(t);
       }
 
       function onSliderInput() {
@@ -800,27 +705,22 @@
         setTValue(t);
         if (currentFn && !isPlaying) {
           if (sliderDebounce) clearTimeout(sliderDebounce);
-          sliderDebounce = setTimeout(() => { updatePlot(t); sliderDebounce = null; }, 120);
+          sliderDebounce = setTimeout(async () => {
+            await updatePlot(t);
+            sliderDebounce = null;
+          }, 120);
         }
       }
 
-      var animFrameCount = 0;
-      var mobileFpsThrottle = 3;
       function togglePlay() {
         isPlaying = !isPlaying;
         elements.btnPlay.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
         elements.btnPlay.classList.toggle('btn-success', isPlaying);
         if (isPlaying) {
           lastUpdate = performance.now();
-          animFrameCount = 0;
-          function loop(now) {
+          async function loop(now) {
             if (!isPlaying) return;
             animId = requestAnimationFrame(loop);
-            var doUpdate = true;
-            if (isMobile()) {
-              animFrameCount++;
-              doUpdate = (animFrameCount % mobileFpsThrottle === 0);
-            }
             const speed = parseFloat(elements.speed.value) || 1;
             const r = getRanges();
             const dt = (now - lastUpdate) / 1000 * (r.tMax - r.tMin) * 0.15 * speed;
@@ -829,7 +729,7 @@
             if (t > r.tMax) t = r.tMin + (t - r.tMax);
             if (t < r.tMin) t = r.tMax - (r.tMin - t);
             setTValue(t);
-            if (doUpdate) updatePlot(t);
+            await updatePlot(t);
           }
           animId = requestAnimationFrame(loop);
         } else if (animId != null) {
@@ -838,10 +738,10 @@
         }
       }
 
-      function resetTime() {
+      async function resetTime() {
         const r = getRanges();
         setTValue(r.tMin);
-        if (currentFn) updatePlot(r.tMin);
+        if (currentFn) await updatePlot(r.tMin);
       }
 
       if (elements.btnHamburger && elements.sidebar) {
