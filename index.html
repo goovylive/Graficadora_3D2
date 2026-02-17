@@ -457,12 +457,32 @@
 
       <section class="panel">
         <h2 class="panel-title">Tiempo (t)</h2>
+        <div class="form-group">
+          <label for="animDuration">Duración de animación (segundos)</label>
+          <input type="number" id="animDuration" value="10" min="3" max="60" step="1">
+          <small style="color: var(--text-secondary); font-size: 0.7rem;">
+            Tiempo que tarda en completar un ciclo completo
+          </small>
+        </div>
+        <div class="form-group">
+          <label for="targetFPS">Frames por segundo (FPS)</label>
+          <select id="targetFPS">
+            <option value="15">15 FPS - Bajo (rápido)</option>
+            <option value="24">24 FPS - Medio</option>
+            <option value="30" selected>30 FPS - Alto</option>
+            <option value="60">60 FPS - Ultra (lento)</option>
+          </select>
+          <small style="color: var(--text-secondary); font-size: 0.7rem;">
+            Mayor FPS = más suave pero más tiempo de pre-cálculo
+          </small>
+        </div>
         <div class="slider-wrap">
           <label>t = <span id="tValue" class="time-display">0</span></label>
           <input type="range" id="tSlider" min="0" max="1000" value="0" step="1">
         </div>
         <div class="controls-row">
           <button type="button" class="btn btn-success" id="btnPlay" title="Play/Pause">▶ Play</button>
+          <button type="button" class="btn" id="btnPrecalc" title="Pre-calcular frames">🎬 Pre-calcular</button>
           <button type="button" class="btn" id="btnReset" title="Reset">↺ Reset</button>
           <select id="speed">
             <option value="0.5">Lento</option>
@@ -555,7 +575,10 @@
         btnHamburger: document.getElementById('btnHamburger'),
         sidebar: document.getElementById('sidebar'),
         mobileWarning: document.getElementById('mobileWarning'),
-        btnLowPower: document.getElementById('btnLowPower')
+        btnLowPower: document.getElementById('btnLowPower'),
+        animDuration: document.getElementById('animDuration'),
+        targetFPS: document.getElementById('targetFPS'),
+        btnPrecalc: document.getElementById('btnPrecalc')
       };
 
       let currentFn = null;
@@ -563,6 +586,9 @@
       let isPlaying = false;
       let lastUpdate = 0;
       let sliderDebounce = null;
+      let frameCache = [];
+      let isCaching = false;
+      let cacheProgress = 0;
 
       function showApiIndicator() {
         const el = document.getElementById('apiIndicator');
@@ -619,6 +645,76 @@
           tMin: parseFloat(elements.tMin.value) || 0,
           tMax: parseFloat(elements.tMax.value) || 6.28
         };
+      }
+
+      function calculateNumFrames() {
+        const r = getRanges();
+        const tRange = r.tMax - r.tMin;
+        const animDuration = parseFloat(elements.animDuration?.value || document.getElementById('animDuration')?.value) || 10;
+        const targetFPS = parseFloat(elements.targetFPS?.value || document.getElementById('targetFPS')?.value) || 30;
+        const numFrames = Math.round(animDuration * targetFPS);
+        const limitedFrames = Math.max(10, Math.min(300, numFrames));
+        const tStep = tRange / limitedFrames;
+        console.log(`📊 Configuración de pre-cálculo:
+    - Rango temporal: ${r.tMin} → ${r.tMax} (${tRange.toFixed(2)}s)
+    - Duración animación: ${animDuration}s
+    - FPS objetivo: ${targetFPS}
+    - Frames a calcular: ${limitedFrames}
+    - Paso temporal: ${tStep.toFixed(4)}
+  `);
+        return {
+          numFrames: limitedFrames,
+          tStep: tStep,
+          animDuration: animDuration
+        };
+      }
+
+      function getMeshFromCache(t) {
+        if (frameCache.length === 0) return null;
+        let prev = frameCache[0];
+        let next = frameCache[0];
+        for (let i = 0; i < frameCache.length - 1; i++) {
+          if (frameCache[i].t <= t && frameCache[i + 1].t >= t) {
+            prev = frameCache[i];
+            next = frameCache[i + 1];
+            break;
+          }
+        }
+        if (Math.abs(t - next.t) < Math.abs(t - prev.t)) {
+          return next.mesh;
+        }
+        return prev.mesh;
+      }
+
+      async function precalculateFrames() {
+        if (!currentFn) return false;
+        frameCache = [];
+        isCaching = true;
+        const r = getRanges();
+        const config = calculateNumFrames();
+        const { numFrames, tStep } = config;
+        elements.loadingOverlay.classList.add('visible');
+        showMsg(elements.msgTime, `Pre-calculando ${numFrames} frames (0%)...`, '');
+        for (let i = 0; i <= numFrames; i++) {
+          const t = r.tMin + i * tStep;
+          try {
+            const mesh = await computeMesh(t);
+            if (mesh) {
+              frameCache.push({ t: t, mesh: mesh });
+            }
+            cacheProgress = Math.round((i / numFrames) * 100);
+            showMsg(elements.msgTime, `Pre-calculando ${numFrames} frames (${cacheProgress}%)...`, '');
+          } catch (error) {
+            console.error('Error pre-calculando frame:', error);
+          }
+        }
+        elements.loadingOverlay.classList.remove('visible');
+        hideMsg(elements.msgTime);
+        isCaching = false;
+        const totalTime = Math.round(frameCache.length * 1.5);
+        showMsg(elements.msgTime, `✓ ${frameCache.length} frames listos (~${totalTime}s de cálculo)`, 'success');
+        setTimeout(() => hideMsg(elements.msgTime), 3000);
+        return frameCache.length > 0;
       }
 
       async function computeMesh(t) {
@@ -694,16 +790,21 @@
       async function updatePlot(t) {
         if (!currentFn) return;
 
-        if (!isPlaying) {
-          elements.loadingOverlay.classList.add('visible');
-          showMsg(elements.msgTime, 'Calculando en servidor...', '');
+        let mesh = null;
+
+        if (isPlaying && frameCache.length > 0) {
+          mesh = getMeshFromCache(t);
+        } else {
+          if (!isPlaying) {
+            elements.loadingOverlay.classList.add('visible');
+            showMsg(elements.msgTime, 'Calculando en servidor...', '');
+          }
+          mesh = await computeMesh(t);
+          elements.loadingOverlay.classList.remove('visible');
+          hideMsg(elements.msgTime);
         }
 
         try {
-          const mesh = await computeMesh(t);
-          elements.loadingOverlay.classList.remove('visible');
-          hideMsg(elements.msgTime);
-
           if (!mesh || mesh.vertices.length === 0) {
             Plotly.react(elements.plot3d, [{
               x: [0], y: [0], z: [0], mode: 'markers', type: 'scatter3d',
@@ -762,6 +863,8 @@
 
       async function buildAndUpdate() {
         hideMsg(elements.msgEquation);
+        frameCache = [];
+        console.log('🗑️ Caché limpiado - ecuación o parámetros modificados');
         currentFn = true;
         const t = getT();
         setTValue(t);
@@ -781,31 +884,54 @@
       }
 
       function togglePlay() {
-        isPlaying = !isPlaying;
-        elements.btnPlay.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
-        elements.btnPlay.classList.toggle('btn-success', isPlaying);
-        if (isPlaying) {
-          lastUpdate = performance.now();
-          async function loop(now) {
-            if (!isPlaying) return;
-
-            const speed = parseFloat(elements.speed.value) || 1;
-            const r = getRanges();
-            const dt = (now - lastUpdate) / 1000 * (r.tMax - r.tMin) * 0.05 * speed;
-            lastUpdate = now;
-            let t = getT() + dt;
-            if (t > r.tMax) t = r.tMin + (t - r.tMax);
-            if (t < r.tMin) t = r.tMax - (r.tMin - t);
-            setTValue(t);
-
-            await updatePlot(t);
-
-            if (isPlaying) {
-              animId = requestAnimationFrame(loop);
-            }
+        if (!isPlaying) {
+          if (frameCache.length === 0) {
+            (async () => {
+              const success = await precalculateFrames();
+              if (!success) {
+                showMsg(elements.msgEquation, 'Error al pre-calcular animación', 'error');
+                return;
+              }
+              startAnimation();
+            })();
+          } else {
+            startAnimation();
           }
+        } else {
+          stopAnimation();
+        }
+      }
+
+      function startAnimation() {
+        isPlaying = true;
+        elements.btnPlay.textContent = '⏸ Pause';
+        elements.btnPlay.classList.add('btn-success');
+        const r = getRanges();
+        const config = calculateNumFrames();
+        const tRange = r.tMax - r.tMin;
+        const speedFactor = tRange / config.animDuration;
+        lastUpdate = performance.now();
+
+        function loop(now) {
+          if (!isPlaying) return;
           animId = requestAnimationFrame(loop);
-        } else if (animId != null) {
+          const userSpeed = parseFloat(elements.speed.value) || 1;
+          const dt = (now - lastUpdate) / 1000 * speedFactor * userSpeed;
+          lastUpdate = now;
+          let t = getT() + dt;
+          if (t > r.tMax) t = r.tMin + (t - r.tMax);
+          if (t < r.tMin) t = r.tMax - (r.tMin - t);
+          setTValue(t);
+          updatePlot(t);
+        }
+        animId = requestAnimationFrame(loop);
+      }
+
+      function stopAnimation() {
+        isPlaying = false;
+        elements.btnPlay.textContent = '▶ Play';
+        elements.btnPlay.classList.remove('btn-success');
+        if (animId != null) {
           cancelAnimationFrame(animId);
           animId = null;
         }
@@ -843,6 +969,29 @@
       elements.tSlider.addEventListener('input', onSliderInput);
       elements.btnPlay.addEventListener('click', togglePlay);
       elements.btnReset.addEventListener('click', resetTime);
+
+      if (elements.btnPrecalc) {
+        elements.btnPrecalc.addEventListener('click', async () => {
+          await precalculateFrames();
+        });
+      }
+
+      if (elements.tMin) {
+        elements.tMin.addEventListener('change', () => {
+          if (frameCache.length > 0) {
+            frameCache = [];
+            console.log('🗑️ Caché limpiado - tMin cambió');
+          }
+        });
+      }
+      if (elements.tMax) {
+        elements.tMax.addEventListener('change', () => {
+          if (frameCache.length > 0) {
+            frameCache = [];
+            console.log('🗑️ Caché limpiado - tMax cambió');
+          }
+        });
+      }
 
       elements.examples.forEach(btn => {
         btn.addEventListener('click', function() {
