@@ -283,6 +283,12 @@
       color: #3fb950;
     }
 
+    .message.warning {
+      background: rgba(210, 153, 34, 0.15);
+      border: 1px solid var(--warning);
+      color: #d29922;
+    }
+
     .message.visible {
       display: block;
       animation: fadeIn 0.3s ease;
@@ -422,14 +428,20 @@
         </div>
         <div class="form-group resolution-select">
           <label for="resolution">Resolución de malla</label>
-          <select id="resolution">
-            <option value="12">Baja (12³) — rápido</option>
+          <select id="resolution" class="form-control">
+            <option value="10">Baja (10³) - Rápida</option>
+            <option value="14">Media-Baja (14³)</option>
             <option value="18" selected>Media (18³)</option>
-            <option value="24">Alta (24³)</option>
-            <option value="28">Muy alta (28³) — lento</option>
+            <option value="24">Alta (24³) - Lenta</option>
+            <option value="32">Muy Alta (32³) - Muy Lenta</option>
           </select>
         </div>
         <button type="button" class="btn btn-primary" id="btnUpdate" style="width:100%">Actualizar superficie</button>
+        <div class="form-group">
+          <small style="color: var(--text-secondary); font-size: 0.75rem;">
+            ⚠️ Los cálculos se realizan en servidor. Mayor resolución = más tiempo de espera.
+          </small>
+        </div>
         <div id="msgEquation" class="message"></div>
       </section>
 
@@ -472,6 +484,23 @@
       <div id="plot3d"></div>
       <div id="loadingOverlay" class="loading-overlay">
         <div class="spinner"></div>
+      </div>
+      <div id="apiIndicator" style="
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        padding: 6px 12px;
+        background: rgba(88, 166, 255, 0.2);
+        border: 1px solid rgba(88, 166, 255, 0.4);
+        border-radius: 4px;
+        color: #58a6ff;
+        font-size: 0.75rem;
+        font-weight: 600;
+        display: none;
+        z-index: 9999;
+        backdrop-filter: blur(4px);
+      ">
+        <span>●</span> Procesando...
       </div>
     </div>
   </div>
@@ -535,6 +564,16 @@
       let lastUpdate = 0;
       let sliderDebounce = null;
 
+      function showApiIndicator() {
+        const el = document.getElementById('apiIndicator');
+        if (el) el.style.display = 'block';
+      }
+
+      function hideApiIndicator() {
+        const el = document.getElementById('apiIndicator');
+        if (el) el.style.display = 'none';
+      }
+
       function isMobile() {
         return window.matchMedia('(max-width: 768px)').matches || 'ontouchstart' in window;
       }
@@ -585,57 +624,85 @@
       async function computeMesh(t) {
         if (!currentFn) return null;
         const r = getRanges();
-        let maxRes = 32;
-        if (isMobile()) maxRes = 12;
-        if (isLowPower()) maxRes = 10;
-        const requested = parseInt(elements.resolution.value, 10) || 18;
-        const n = Math.min(maxRes, Math.max(8, isLowPower() ? 10 : requested));
+        const n = Math.min(32, Math.max(8, parseInt(elements.resolution.value, 10) || 18));
 
-        try {
-          const response = await fetch(`${API_URL}/compute-mesh`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              equation: elements.equation.value.trim(),
-              ranges: {
-                xMin: r.xMin,
-                xMax: r.xMax,
-                yMin: r.yMin,
-                yMax: r.yMax,
-                zMin: r.zMin,
-                zMax: r.zMax
+        const MAX_RETRIES = 3;
+        const TIMEOUT_MS = 60000;
+
+        showApiIndicator();
+
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+            const response = await fetch(`${API_URL}/compute-mesh`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
               },
-              t: t,
-              resolution: n
-            })
-          });
+              body: JSON.stringify({
+                equation: elements.equation.value.trim(),
+                ranges: {
+                  xMin: r.xMin,
+                  xMax: r.xMax,
+                  yMin: r.yMin,
+                  yMax: r.yMax,
+                  zMin: r.zMin,
+                  zMax: r.zMax
+                },
+                t: t,
+                resolution: n
+              }),
+              signal: controller.signal
+            });
 
-          if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            throw new Error(err.detail || 'Error al calcular la malla');
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+              const error = await response.json().catch(() => ({}));
+              throw new Error(error.detail || 'Error al calcular la malla');
+            }
+
+            const data = await response.json();
+            hideApiIndicator();
+            return {
+              vertices: data.vertices,
+              faces: data.faces
+            };
+          } catch (error) {
+            console.error(`Intento ${attempt}/${MAX_RETRIES} falló:`, error);
+
+            if (error.name === 'AbortError') {
+              showMsg(elements.msgTime, `Timeout (intento ${attempt}/${MAX_RETRIES})`, 'warning');
+            }
+
+            if (attempt === MAX_RETRIES) {
+              hideApiIndicator();
+              showMsg(elements.msgEquation, 'Error de conexión con el servidor. Intenta con menor resolución.', 'error');
+              return null;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
           }
-
-          const data = await response.json();
-          return {
-            vertices: data.vertices,
-            faces: data.faces
-          };
-        } catch (error) {
-          console.error('Error API:', error);
-          showMsg(elements.msgEquation, error.message, 'error');
-          return null;
         }
+
+        hideApiIndicator();
+        return null;
       }
 
       async function updatePlot(t) {
         if (!currentFn) return;
-        elements.loadingOverlay.classList.add('visible');
+
+        if (!isPlaying) {
+          elements.loadingOverlay.classList.add('visible');
+          showMsg(elements.msgTime, 'Calculando en servidor...', '');
+        }
 
         try {
           const mesh = await computeMesh(t);
           elements.loadingOverlay.classList.remove('visible');
+          hideMsg(elements.msgTime);
 
           if (!mesh || mesh.vertices.length === 0) {
             Plotly.react(elements.plot3d, [{
@@ -688,6 +755,7 @@
           }, plotlyConfig);
         } catch (error) {
           elements.loadingOverlay.classList.remove('visible');
+          hideMsg(elements.msgTime);
           console.error('Error al actualizar plot:', error);
         }
       }
@@ -708,7 +776,7 @@
           sliderDebounce = setTimeout(async () => {
             await updatePlot(t);
             sliderDebounce = null;
-          }, 120);
+          }, 500);
         }
       }
 
@@ -720,16 +788,21 @@
           lastUpdate = performance.now();
           async function loop(now) {
             if (!isPlaying) return;
-            animId = requestAnimationFrame(loop);
+
             const speed = parseFloat(elements.speed.value) || 1;
             const r = getRanges();
-            const dt = (now - lastUpdate) / 1000 * (r.tMax - r.tMin) * 0.15 * speed;
+            const dt = (now - lastUpdate) / 1000 * (r.tMax - r.tMin) * 0.05 * speed;
             lastUpdate = now;
             let t = getT() + dt;
             if (t > r.tMax) t = r.tMin + (t - r.tMax);
             if (t < r.tMin) t = r.tMax - (r.tMin - t);
             setTValue(t);
+
             await updatePlot(t);
+
+            if (isPlaying) {
+              animId = requestAnimationFrame(loop);
+            }
           }
           animId = requestAnimationFrame(loop);
         } else if (animId != null) {
